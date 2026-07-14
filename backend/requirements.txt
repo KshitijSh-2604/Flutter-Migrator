@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic
+pydantic-settings
+openai
+google-genai
+httpx
+PyYAML
+packaging
+python-multipart
+aiofiles
+gitpython
+PyGithub
+python-dotenv
+tenacity
+google-auth

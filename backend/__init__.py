@@ -1,0 +1,1 @@
+# Flutter Migration Assistant — app package
