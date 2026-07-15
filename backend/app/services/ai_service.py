@@ -1,86 +1,28 @@
 """
-AI migration layer.
-Uses the NEW Google GenAI SDK (google-genai).
+AI migration layer supporting multiple engines (Gemini and OpenAI).
+Supports User-provided API keys.
 """
 
 import json
 from google import genai
 from google.genai import types
+from openai import AsyncOpenAI
 from ..config import settings
 
-def _get_client():
-    """Helper to ensure client is initialized with the current settings."""
-    return genai.Client(api_key=settings.gemini_api_key)
-
-SYSTEM_PROMPT = """
-You are an expert Dart/Flutter migration engineer. 
-Your task is to take the provided code and migrate it to the TARGET DART VERSION.
-
-CRITICAL OUTPUT RULES:
-1. ALWAYS return a valid JSON object.
-2. The "migrated_code" must contain the complete, compilation-ready migrated file.
-3. The "changes_summary" must NEVER be empty if any changes were made. For every modification (like adding '?', adding 'required', etc.), add an entry.
-4. Apply Sound Null Safety (Dart 2.12+) aggressively:
-   - All class fields must be nullable (type?) or non-nullable (required in constructor).
-   - Factories must handle nulls.
-   - Constructors must use 'required' for named parameters that cannot be null.
-
-JSON Schema:
-{
-  "migrated_code": "full source code",
-  "changes_summary": [
-    {
-      "category": "Null Safety",
-      "description": "Added 'required' to constructor parameter 'latitude'",
-      "before": "this.latitude",
-      "after": "required this.latitude",
-      "source": "ai",
-      "confidence": 100
-    }
-  ],
-  "pubspec_changes": {
-    "add_dependencies": [],
-    "remove_dependencies": [],
-    "update_dependencies": [],
-    "sdk_constraints": {"dart": "^3.0.0", "flutter": "^3.10.0"}
-  },
-  "migration_steps": ["Run 'dart pub get'"],
-  "warnings": []
-}
-"""
-
-# Comprehensive list of models to try in order of preference
-# Gemini 3.5 Flash is set as primary as requested by user
-FALLBACK_MODELS = [
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-flash-latest"
-]
-
-async def test_ai_connection():
-    """
-    Test if the Gemini API key and model are working.
-    Tries multiple models to find one that isn't overloaded.
-    """
-    client = _get_client()
-    import sys
-    for model_id in FALLBACK_MODELS:
-        try:
-            # Using a tiny prompt for testing
-            response = client.models.generate_content(
-                model=model_id,
-                contents="test"
-            )
-            if response and response.text:
-                sys.stderr.write(f"AI_TEST_SUCCESS: Model {model_id} is working.\n")
-                return True
-        except Exception as e:
-            sys.stderr.write(f"AI_TEST_INFO: Model {model_id} failed: {str(e)[:100]}...\n")
-            continue
-    return False
+def _process_ai_result(result: dict) -> dict:
+    """Ensure all changes in the result have the source set to 'ai'."""
+    if not isinstance(result, dict):
+        return result
+    
+    changes = result.get("changes_summary", [])
+    if isinstance(changes, list):
+        for change in changes:
+            if isinstance(change, dict):
+                change["source"] = "ai"
+                if "confidence" not in change:
+                    change["confidence"] = 80
+    
+    return result
 
 async def migrate_with_ai(
         code: str,
@@ -88,91 +30,107 @@ async def migrate_with_ai(
         flutter_version_to: str,
         package_analysis: list | None = None,
         dart_sdk: str | None = None,
+        user_gemini_key: str | None = None,
+        user_openai_key: str | None = None,
 ) -> dict:
     """
-    Call Gemini using the new google-genai SDK with multi-model fallback.
+    Tries OpenAI if a key is provided, otherwise falls back to Gemini.
     """
-    client = _get_client()
-    import sys
     
-    # Build structured context block
-    pkg_block = ""
-    if package_analysis:
-        outdated = [p for p in package_analysis if p["status"] in ("upgrade", "breaking")]
-        if outdated:
-            pkg_block = "Outdated packages (needs attention):\n"
-            for p in outdated:
-                status = "⚠ BREAKING" if p["status"] == "breaking" else "↑ upgrade"
-                pkg_block += (
-                    f"  - {p['name']}: "
-                    f"{p['installed_version']} → {p['latest_version']} {status}\n"
-                )
-
-    user_message = f"""
-Current Dart version: {flutter_version_from or 'unknown (detect from code)'}
-Target Dart version:  {flutter_version_to or 'latest stable'}
-Current Dart SDK:        {dart_sdk or 'unknown'}
-
-{pkg_block}
-
-The rule engine has already handled basic renames and removed 'new' keywords. 
-Your job is to apply COMPLEX changes required for the TARGET DART VERSION: {flutter_version_to or 'latest stable'}.
-
-CRITICAL: If the target version is 2.12.0 or higher, you MUST apply Sound Null Safety:
-1. Identify nullable fields and add '?' to their types.
-2. Add 'required' keyword to named parameters in constructors that don't have a default value and are not nullable.
-3. Replace 'new List()' with '[]' or 'List.filled()'.
-4. Ensure all factory methods handle null data from JSON safely.
-5. Use late keyword where appropriate.
-6. Fix any other breaking changes from the specified From version to the To version.
-
-If the code is already compliant, just return it as is but ensure all modern patterns are used.
-
---- CODE TO MIGRATE ---
-{code}
---- END CODE ---
-
-Return only the JSON migration result.
+    system_prompt = f"""
+You are an expert Dart/Flutter migration engineer. 
+Migrate the provided code to TARGET DART VERSION: {flutter_version_to}.
+Apply Sound Null Safety aggressively if target is 2.12+.
+Return ONLY valid JSON.
 """
 
-    # Try every possible model until one succeeds
-    for model_id in FALLBACK_MODELS:
-        try:
-            response = client.models.generate_content(
-                model=model_id,
-                contents=SYSTEM_PROMPT + "\n\n" + user_message,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.1,
-                    safety_settings=[
-                        types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-                        types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-                        types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-                        types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-                    ]
-                )
-            )
+    user_message = f"""
+Original Code:
+{code}
 
-            if not response or not response.text:
+Output JSON with keys: "migrated_code", "changes_summary" (list of objects with category, description, before, after), "pubspec_changes", "migration_steps", "warnings".
+"""
+
+    # 1. Try OpenAI if key is available
+    if user_openai_key:
+        try:
+            client = AsyncOpenAI(api_key=user_openai_key)
+            response = await client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ],
+                response_format={"type": "json_object"}
+            )
+            raw_res = json.loads(response.choices[0].message.content)
+            return _process_ai_result(raw_res)
+        except Exception as e:
+            import sys
+            sys.stderr.write(f"OPENAI_ERROR: {str(e)}\n")
+
+    # 2. Try Gemini (User key or System key)
+    gemini_key = user_gemini_key or settings.gemini_api_key
+    if gemini_key:
+        client = genai.Client(api_key=gemini_key)
+        # Expanded list of models to find one with available quota
+        # gemini-3.1-flash-lite is preferred by the user for higher daily limits
+        models_to_try = [
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-flash-latest",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-8b",
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-pro",
+        ]
+        for model_id in models_to_try:
+            try:
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=system_prompt + "\n\n" + user_message,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.1
+                    )
+                )
+                if response and response.text:
+                    text = response.text.strip()
+                    if text.startswith("```json"): text = text[7:-3]
+                    elif text.startswith("```"): text = text[3:-3]
+                    raw_res = json.loads(text.strip())
+                    return _process_ai_result(raw_res)
+            except Exception as e:
+                import sys
+                sys.stderr.write(f"GEMINI_ERROR ({model_id}): {str(e)}\n")
                 continue
 
-            text = response.text.strip()
-            # Clean up markdown wrappers
-            if text.startswith("```"):
-                if "json" in text[:10]:
-                    text = text.split("json", 1)[1]
-                else:
-                    text = text.split("```", 1)[1]
-                if "```" in text:
-                    text = text.rsplit("```", 1)[0]
-            text = text.strip()
+    raise Exception("No valid AI configuration found or quota exceeded.")
 
-            result = json.loads(text)
-            sys.stderr.write(f"AI_MIGRATION_SUCCESS: Used model {model_id}\n")
-            return result
+async def validate_api_key(key: str, provider: str):
+    """
+    Shallow validation to trust the user. 
+    Actual validation happens during migration attempts.
+    """
+    if not key:
+        return False
+    
+    clean_key = str(key).strip()
+    
+    if provider == "openai":
+        return clean_key.startswith("sk-") and len(clean_key) > 10
+    elif provider == "gemini":
+        return len(clean_key) > 10
+        
+    return False
 
-        except Exception as e:
-            sys.stderr.write(f"AI_MIGRATION_INFO: Model {model_id} failed: {str(e)[:100]}...\n")
-            continue
-
-    raise Exception("All Gemini models (including Flash, Flash-Lite, and 1.5) are currently overloaded or have exceeded your quota. Please try again later or provide a different API key.")
+async def test_ai_connection():
+    """Test if the system Gemini API key is working."""
+    try:
+        client = genai.Client(api_key=settings.gemini_api_key)
+        # Using 3.1 flash lite as preferred
+        response = client.models.generate_content(model="gemini-3.1-flash-lite", contents="hi")
+        return True if response and response.text else False
+    except:
+        return False

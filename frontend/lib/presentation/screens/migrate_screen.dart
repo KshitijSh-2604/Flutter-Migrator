@@ -4,6 +4,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:gap/gap.dart';
 import 'package:provider/provider.dart';
 import '../../data/models/migration_model.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/migration_provider.dart';
 import '../widgets/code_input_widget.dart';
 
@@ -100,6 +101,12 @@ class _MigrateScreenState extends State<MigrateScreen>
   }
 
   Future<void> _migrate() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasValidKey) {
+      _snack('Please configure your API keys in the Profile menu before migrating.', isError: true);
+      return;
+    }
+
     final provider = context.read<MigrationProvider>();
     String title = _titleCtrl.text.trim();
     

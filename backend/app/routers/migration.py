@@ -2,7 +2,7 @@ import io
 import json
 import zipfile
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Header
 from sqlalchemy.orm import Session
 from typing import Optional
 
@@ -11,7 +11,7 @@ from ..models.migration import Migration
 from ..schemas.migration import (
     MigrationCreate, MigrationResponse, MigrationListResponse, GithubMigrationCreate
 )
-from ..services.ai_service import migrate_with_ai
+from ..services.ai_service import migrate_with_ai, validate_api_key
 from ..services.rule_engine import apply_dart_rules, apply_android_rules, compute_confidence
 from ..services.project_analyzer import (
     parse_pubspec, analyze_packages, extract_dart_files_from_zip, infer_dependencies_from_code
@@ -19,6 +19,20 @@ from ..services.project_analyzer import (
 from ..config import settings
 
 router = APIRouter(prefix="/api/migrations", tags=["migrations"])
+
+@router.post("/validate-key")
+async def check_key(payload: dict):
+    """Check if provided API key is valid."""
+    key = payload.get("key")
+    provider = payload.get("provider") # 'openai' or 'gemini'
+    if not key or not provider:
+        raise HTTPException(400, "Key and provider required")
+    
+    is_valid = await validate_api_key(key, provider)
+    if is_valid:
+        return {"status": "ok"}
+    else:
+        raise HTTPException(401, "Invalid API key")
 
 
 # ── Shared migration pipeline ─────────────────────────────────────────────────
@@ -31,20 +45,14 @@ async def _run_migration_pipeline(
         android_gradle: Optional[str] = None,
         ios_podfile: Optional[str] = None,
         extra_dart_files: Optional[dict] = None,
+        user_gemini_key: str = None,
+        user_openai_key: str = None,
 ) -> Migration:
-    """
-    Hybrid pipeline:
-      1. Parse pubspec for real version data
-      2. Fetch latest package versions from pub.dev
-      3. Run deterministic rule engine
-      4. FOR SINGLE FILE: Call AI immediately
-      5. FOR MULTI FILE: Store rule-migrated code, user migrates with AI on-demand
-      6. Merge results, compute confidence, save
-    """
     try:
-        # Step 1 — Parse pubspec
         pubspec_data = {}
         package_analysis = []
+        target_v_str = migration.flutter_version_to or settings.flutter_version_target
+        
         if pubspec_content:
             pubspec_data = parse_pubspec(pubspec_content)
             flutter_version_from = pubspec_data.get("flutter_version") or migration.flutter_version_from
@@ -52,7 +60,6 @@ async def _run_migration_pipeline(
             migration.flutter_version_from = flutter_version_from
             migration.detected_sdk = dart_sdk
 
-            # Step 2 — Check pub.dev for latest versions
             all_deps = {
                 **pubspec_data.get("dependencies", {}),
                 **pubspec_data.get("dev_dependencies", {}),
@@ -63,10 +70,8 @@ async def _run_migration_pipeline(
             flutter_version_from = migration.flutter_version_from
             dart_sdk = None
 
-        # Step 3 — Rule engine (deterministic, free)
-        rule_migrated_code, rule_changes = apply_dart_rules(code)
+        rule_migrated_code, rule_changes = apply_dart_rules(code, target_v_str)
 
-        # Step 3b — Android gradle rules
         if android_gradle:
             migrated_gradle, android_changes_list = apply_android_rules(android_gradle)
             migration.android_changes = json.dumps({
@@ -74,19 +79,19 @@ async def _run_migration_pipeline(
                 "changes": android_changes_list,
             })
 
-        # Step 4 — AI Logic
         ai_changes = []
         is_multi_file = True if extra_dart_files else False
         
         if not is_multi_file:
-            # Single file mode: Perform AI migration immediately
             try:
                 ai_result = await migrate_with_ai(
                     code=rule_migrated_code,
                     flutter_version_from=flutter_version_from,
-                    flutter_version_to=migration.flutter_version_to or settings.flutter_version_target,
+                    flutter_version_to=target_v_str,
                     package_analysis=package_analysis,
                     dart_sdk=dart_sdk,
+                    user_gemini_key=user_gemini_key,
+                    user_openai_key=user_openai_key
                 )
                 ai_changes = ai_result.get("changes_summary", [])
                 migration.migrated_code = ai_result.get("migrated_code", rule_migrated_code)
@@ -99,17 +104,13 @@ async def _run_migration_pipeline(
                 migration.pubspec_changes = json.dumps({})
                 migration.migration_steps = json.dumps(["Rule engine applied.", f"AI failed: {str(ai_err)[:100]}"])
         else:
-            # Multi-file mode: Just use rule engine for now
             migration.migrated_code = rule_migrated_code
             migration.migration_steps = json.dumps([
                 "Project scanned and rule-based migrations applied to all files.",
                 "Click 'Migrate with AI' on individual files to perform deep refactoring."
             ])
 
-        # Step 4b — Prepare File Sidebar Data
         files_results = {}
-        
-        # Add primary file
         p_key = "lib/main.dart"
         files_results[p_key] = {
             "original": code,
@@ -121,7 +122,7 @@ async def _run_migration_pipeline(
         if extra_dart_files:
             for path, content in extra_dart_files.items():
                 if path == p_key: continue
-                m_code, m_changes = apply_dart_rules(content)
+                m_code, m_changes = apply_dart_rules(content, target_v_str)
                 files_results[path] = {
                     "original": content,
                     "migrated": m_code,
@@ -130,8 +131,6 @@ async def _run_migration_pipeline(
                 }
 
         migration.files_data = json.dumps(files_results)
-
-        # Step 5 — Finalize
         migration.changes_summary = json.dumps(rule_changes + ai_changes)
         migration.confidence_score = compute_confidence(rule_changes, ai_changes)
         migration.files_analyzed = len(files_results)
@@ -150,8 +149,15 @@ async def _run_migration_pipeline(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/", response_model=MigrationResponse, status_code=201)
-async def create_migration(payload: MigrationCreate, db: Session = Depends(get_db)):
+async def create_migration(
+    payload: MigrationCreate, 
+    db: Session = Depends(get_db),
+    x_user_id: str = Header(...),
+    x_gemini_key: Optional[str] = Header(None),
+    x_openai_key: Optional[str] = Header(None)
+):
     migration = Migration(
+        user_id=x_user_id,
         title=payload.title,
         original_code=payload.original_code,
         flutter_version_from=payload.flutter_version_from,
@@ -162,7 +168,11 @@ async def create_migration(payload: MigrationCreate, db: Session = Depends(get_d
     db.add(migration)
     db.commit()
     db.refresh(migration)
-    return await _run_migration_pipeline(db, migration, payload.original_code)
+    return await _run_migration_pipeline(
+        db, migration, payload.original_code,
+        user_gemini_key=x_gemini_key,
+        user_openai_key=x_openai_key
+    )
 
 
 @router.post("/upload", response_model=MigrationResponse, status_code=201)
@@ -172,11 +182,15 @@ async def migrate_dart_file(
         flutter_version_from: Optional[str] = Form(None),
         flutter_version_to: Optional[str] = Form(None),
         db: Session = Depends(get_db),
+        x_user_id: str = Header(...),
+        x_gemini_key: Optional[str] = Header(None),
+        x_openai_key: Optional[str] = Header(None)
 ):
     if not file.filename.endswith(".dart"):
         raise HTTPException(400, "Only .dart files supported here.")
     content = (await file.read()).decode("utf-8")
     migration = Migration(
+        user_id=x_user_id,
         title=title or file.filename,
         original_code=content,
         original_filename=file.filename,
@@ -188,7 +202,11 @@ async def migrate_dart_file(
     db.add(migration)
     db.commit()
     db.refresh(migration)
-    return await _run_migration_pipeline(db, migration, content)
+    return await _run_migration_pipeline(
+        db, migration, content,
+        user_gemini_key=x_gemini_key,
+        user_openai_key=x_openai_key
+    )
 
 
 @router.post("/upload-zip", response_model=MigrationResponse, status_code=201)
@@ -198,6 +216,9 @@ async def migrate_zip_project(
         flutter_version_from: Optional[str] = Form(None),
         flutter_version_to: Optional[str] = Form(None),
         db: Session = Depends(get_db),
+        x_user_id: str = Header(...),
+        x_gemini_key: Optional[str] = Header(None),
+        x_openai_key: Optional[str] = Header(None)
 ):
     if not file.filename.endswith(".zip"):
         raise HTTPException(400, "Only .zip files accepted.")
@@ -210,6 +231,7 @@ async def migrate_zip_project(
     
     primary = dart_files.get("lib/main.dart") or next(iter(dart_files.values()), "")
     migration = Migration(
+        user_id=x_user_id,
         title=title or file.filename.replace(".zip", ""),
         original_code=primary,
         original_filename=file.filename,
@@ -227,6 +249,8 @@ async def migrate_zip_project(
         android_gradle=ext.get("android_build_gradle"),
         ios_podfile=ext.get("ios_podfile"),
         extra_dart_files=dart_files,
+        user_gemini_key=x_gemini_key,
+        user_openai_key=x_openai_key
     )
 
 
@@ -234,6 +258,9 @@ async def migrate_zip_project(
 async def migrate_github_repo(
         payload: GithubMigrationCreate,
         db: Session = Depends(get_db),
+        x_user_id: str = Header(...),
+        x_gemini_key: Optional[str] = Header(None),
+        x_openai_key: Optional[str] = Header(None)
 ):
     url = payload.github_url.rstrip("/")
     if "github.com/" not in url: raise HTTPException(400, "Invalid URL")
@@ -254,6 +281,7 @@ async def migrate_github_repo(
     primary = dart_files.get("lib/main.dart") or next(iter(dart_files.values()), "")
 
     migration = Migration(
+        user_id=x_user_id,
         title=payload.title or f"{owner}/{repo}",
         original_code=primary,
         original_filename=f"{owner}/{repo}",
@@ -272,6 +300,8 @@ async def migrate_github_repo(
         android_gradle=ext.get("android_build_gradle"),
         ios_podfile=ext.get("ios_podfile"),
         extra_dart_files=dart_files,
+        user_gemini_key=x_gemini_key,
+        user_openai_key=x_openai_key
     )
 
 
@@ -279,9 +309,12 @@ async def migrate_github_repo(
 async def migrate_file_on_demand(
     migration_id: int,
     payload: dict, # {"file_path": "lib/main.dart"}
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_user_id: str = Header(...),
+    x_gemini_key: Optional[str] = Header(None),
+    x_openai_key: Optional[str] = Header(None)
 ):
-    m = db.query(Migration).filter(Migration.id == migration_id).first()
+    m = db.query(Migration).filter(Migration.id == migration_id, Migration.user_id == x_user_id).first()
     if not m: raise HTTPException(404, "Migration not found")
     
     path = payload.get("file_path")
@@ -291,10 +324,8 @@ async def migrate_file_on_demand(
     file_info = files_data[path]
     original = file_info["original"]
     
-    # 1. Rules
-    r_code, r_changes = apply_dart_rules(original)
+    r_code, r_changes = apply_dart_rules(original, m.flutter_version_to)
     
-    # 2. AI
     try:
         pkgs = json.loads(m.package_analysis or "[]")
         ai_res = await migrate_with_ai(
@@ -302,10 +333,11 @@ async def migrate_file_on_demand(
             flutter_version_from=m.flutter_version_from,
             flutter_version_to=m.flutter_version_to,
             package_analysis=pkgs,
-            dart_sdk=m.detected_sdk
+            dart_sdk=m.detected_sdk,
+            user_gemini_key=x_gemini_key,
+            user_openai_key=x_openai_key
         )
         
-        # Update
         files_data[path] = {
             "original": original,
             "migrated": ai_res.get("migrated_code", r_code),
@@ -321,22 +353,35 @@ async def migrate_file_on_demand(
 
 
 @router.get("/", response_model=MigrationListResponse)
-def list_migrations(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
-    total = db.query(Migration).count()
-    items = db.query(Migration).order_by(Migration.created_at.desc()).offset(skip).limit(limit).all()
+def list_migrations(
+    skip: int = 0, 
+    limit: int = 50, 
+    db: Session = Depends(get_db),
+    x_user_id: str = Header(...)
+):
+    total = db.query(Migration).filter(Migration.user_id == x_user_id).count()
+    items = db.query(Migration).filter(Migration.user_id == x_user_id).order_by(Migration.created_at.desc()).offset(skip).limit(limit).all()
     return {"migrations": items, "total": total}
 
 
 @router.get("/{migration_id}", response_model=MigrationResponse)
-def get_migration(migration_id: int, db: Session = Depends(get_db)):
-    m = db.query(Migration).filter(Migration.id == migration_id).first()
+def get_migration(
+    migration_id: int, 
+    db: Session = Depends(get_db),
+    x_user_id: str = Header(...)
+):
+    m = db.query(Migration).filter(Migration.id == migration_id, Migration.user_id == x_user_id).first()
     if not m: raise HTTPException(404, "NotFound")
     return m
 
 
 @router.delete("/{migration_id}", status_code=204)
-def delete_migration(migration_id: int, db: Session = Depends(get_db)):
-    m = db.query(Migration).filter(Migration.id == migration_id).first()
+def delete_migration(
+    migration_id: int, 
+    db: Session = Depends(get_db),
+    x_user_id: str = Header(...)
+):
+    m = db.query(Migration).filter(Migration.id == migration_id, Migration.user_id == x_user_id).first()
     if not m: raise HTTPException(404, "NotFound")
     db.delete(m)
     db.commit()

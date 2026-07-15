@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 
 class PackageInfo {
   final String name;
@@ -134,7 +135,19 @@ class MigrationModel {
 
   Map<String, dynamic> get parsedPubspecChanges {
     if (pubspecChanges == null) return {};
-    return Map<String, dynamic>.from(jsonDecode(pubspecChanges!));
+    try {
+      final decoded = jsonDecode(pubspecChanges!);
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      if (decoded is String) {
+        // Fallback for when AI returns string instead of map
+        return {'_raw_string': decoded};
+      }
+    } catch (e) {
+      debugPrint('Error parsing pubspec changes: $e');
+    }
+    return {};
   }
 
   List<Map<String, dynamic>> get parsedRecommendedPackages {

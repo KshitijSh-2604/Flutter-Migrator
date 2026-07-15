@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:gap/gap.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/migration_provider.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -17,15 +19,38 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<MigrationProvider>().loadHistory();
+      _checkFirstTimeConfig();
     });
+  }
+
+  Future<void> _checkFirstTimeConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final shouldShow = prefs.getBool('show_config_after_login') ?? false;
+    
+    if (shouldShow) {
+      await prefs.setBool('show_config_after_login', false);
+      if (mounted) {
+        _showApiKeyDialog(isMandatory: false);
+      }
+    }
+  }
+
+  void _showApiKeyDialog({bool isMandatory = false}) {
+    showDialog(
+      context: context,
+      barrierDismissible: !isMandatory,
+      builder: (context) => _ApiKeyDialog(isMandatory: isMandatory),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<MigrationProvider>();
+    final auth = context.watch<AuthProvider>();
     final cs = Theme.of(context).colorScheme;
     final history = provider.migrations;
-
+    
+    // ... stats calculation same as before ...
     final completed = history.where((m) => m.status == 'completed').length;
     final failed    = history.where((m) => m.status == 'failed').length;
     final avgConf   = history
@@ -37,6 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return SelectionArea(
       child: Scaffold(
+        drawer: _ProfileDrawer(onUpdateKey: () => _showApiKeyDialog()),
         body: CustomScrollView(
           slivers: [
             // ── Hero header ────────────────────────────────────────────────────
@@ -46,6 +72,12 @@ class _HomeScreenState extends State<HomeScreen> {
               stretch: true,
               backgroundColor: cs.primary,
               centerTitle: true,
+              leading: Builder(
+                builder: (context) => IconButton(
+                  icon: const Icon(Icons.menu_rounded, color: Colors.white),
+                  onPressed: () => Scaffold.of(context).openDrawer(),
+                ),
+              ),
               flexibleSpace: LayoutBuilder(
                 builder: (context, constraints) {
                   final double top = constraints.biggest.height;
@@ -622,6 +654,170 @@ class _CapabilityRow extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── API Key Dialog ────────────────────────────────────────────────────────────
+
+class _ApiKeyDialog extends StatefulWidget {
+  final bool isMandatory;
+  const _ApiKeyDialog({this.isMandatory = false});
+
+  @override
+  State<_ApiKeyDialog> createState() => _ApiKeyDialogState();
+}
+
+class _ApiKeyDialogState extends State<_ApiKeyDialog> {
+  final _geminiCtrl = TextEditingController();
+  final _openaiCtrl = TextEditingController();
+  bool _isValidating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final auth = context.read<AuthProvider>();
+    _geminiCtrl.text = auth.geminiKey ?? '';
+    _openaiCtrl.text = auth.openaiKey ?? '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = context.read<AuthProvider>();
+    final cs = Theme.of(context).colorScheme;
+
+    return PopScope(
+      canPop: !widget.isMandatory,
+      child: AlertDialog(
+        title: const Text('AI Configuration'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Please provide at least one API key to enable migrations. '
+              'Keys are stored locally in your browser.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const Gap(20),
+            TextField(
+              controller: _geminiCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Google Gemini API Key',
+                prefixIcon: Icon(Icons.psychology_rounded),
+              ),
+            ),
+            const Gap(16),
+            TextField(
+              controller: _openaiCtrl,
+              decoration: const InputDecoration(
+                labelText: 'OpenAI API Key',
+                prefixIcon: Icon(Icons.bolt_rounded),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          if (!widget.isMandatory)
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+          FilledButton(
+            onPressed: _isValidating ? null : () async {
+              final gemini = _geminiCtrl.text.trim();
+              final openai = _openaiCtrl.text.trim();
+              
+              if (gemini.isEmpty && openai.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter at least one key.')));
+                return;
+              }
+
+              setState(() => _isValidating = true);
+              
+              bool success = false;
+              if (gemini.isNotEmpty) {
+                success = await auth.updateKey(gemini, 'gemini');
+              }
+              if (!success && openai.isNotEmpty) {
+                success = await auth.updateKey(openai, 'openai');
+              }
+
+              if (success) {
+                if (mounted) Navigator.pop(context);
+              } else {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to validate API key. Please check your key.')));
+                }
+              }
+              setState(() => _isValidating = false);
+            },
+            child: _isValidating 
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Text('Save & Validate'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Profile Drawer ────────────────────────────────────────────────────────────
+
+class _ProfileDrawer extends StatelessWidget {
+  final VoidCallback onUpdateKey;
+  const _ProfileDrawer({required this.onUpdateKey});
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final cs = Theme.of(context).colorScheme;
+
+    return Drawer(
+      child: Column(
+        children: [
+          UserAccountsDrawerHeader(
+            accountName: Text(
+              (auth.userName != null && auth.userName!.trim().isNotEmpty) ? auth.userName! : 'User', 
+              style: const TextStyle(fontWeight: FontWeight.w700)
+            ),
+            accountEmail: Text(auth.user?.email ?? ''),
+            currentAccountPicture: CircleAvatar(
+              backgroundColor: Colors.white,
+              child: Text(
+                ((auth.userName != null && auth.userName!.isNotEmpty) ? auth.userName! : (auth.user?.email ?? 'U')).substring(0, 1).toUpperCase(),
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: cs.primary),
+              ),
+            ),
+            decoration: BoxDecoration(
+              color: cs.primary,
+              image: const DecorationImage(
+                image: AssetImage('assets/images/landing_bg.png'),
+                fit: BoxFit.cover,
+                opacity: 0.3,
+              ),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.vpn_key_outlined),
+            title: const Text('Update API Keys'),
+            subtitle: Text(auth.hasValidKey ? 'Keys configured' : 'Keys missing'),
+            onTap: () {
+              Navigator.pop(context);
+              onUpdateKey();
+            },
+          ),
+          const Spacer(),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.logout_rounded, color: Colors.red),
+            title: const Text('Logout', style: TextStyle(color: Colors.red)),
+            onTap: () async {
+              await auth.signOut();
+            },
+          ),
+          const Gap(12),
         ],
       ),
     );

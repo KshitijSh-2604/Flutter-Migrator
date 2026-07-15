@@ -7,6 +7,7 @@ class Migration(Base):
     __tablename__ = "migrations"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(String(255), nullable=False, index=True) # Supabase User ID
     title = Column(String(255), nullable=False)
     original_code = Column(Text, nullable=False)
     migrated_code = Column(Text, nullable=True)

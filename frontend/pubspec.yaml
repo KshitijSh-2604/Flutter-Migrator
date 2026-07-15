@@ -30,7 +30,8 @@ dependencies:
 
   # Utils
   intl: ^0.19.0
-  shared_preferences: ^2.3.2
+  shared_preferences: ^2.5.5
+  supabase_flutter: ^2.16.0
 
   # NEW — add after google_fonts:
   diff_match_patch: ^0.4.1      # Computes line-by-line diffs for the diff viewer

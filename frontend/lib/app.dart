@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import 'core/theme/app_theme.dart';
+import 'providers/auth_provider.dart';
+import 'presentation/screens/auth_screen.dart';
 import 'presentation/screens/home_screen.dart';
 import 'presentation/screens/migrate_screen.dart';
 import 'presentation/screens/history_screen.dart';
@@ -11,15 +13,16 @@ class FlutterMigratorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    
     return MaterialApp(
       title: 'Flutter Migrator',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
-      initialRoute: '/',
+      home: auth.user == null ? const AuthScreen() : const HomeScreen(),
       routes: {
-        '/': (context) => const HomeScreen(),
         '/migrate': (context) => const MigrateScreen(),
         '/history': (context) => const HistoryScreen(),
         '/result': (context) => const ResultScreen(),

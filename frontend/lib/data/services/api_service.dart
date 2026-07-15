@@ -40,10 +40,11 @@ class ApiService {
     required String originalCode,
     String? flutterVersionFrom,
     String? flutterVersionTo,
+    Map<String, String>? headers,
   }) async {
     final response = await _client.post(
       Uri.parse(ApiConstants.migrations),
-      headers: _headers,
+      headers: {..._headers, ...?headers},
       body: jsonEncode({
         'title': title,
         'original_code': originalCode,
@@ -55,10 +56,10 @@ class ApiService {
     return MigrationModel.fromJson(jsonDecode(response.body));
   }
 
-  Future<List<MigrationModel>> listMigrations({int skip = 0, int limit = 50}) async {
+  Future<List<MigrationModel>> listMigrations({int skip = 0, int limit = 50, Map<String, String>? headers}) async {
     final uri = Uri.parse(ApiConstants.migrations)
         .replace(queryParameters: {'skip': '$skip', 'limit': '$limit'});
-    final response = await _client.get(uri, headers: _headers);
+    final response = await _client.get(uri, headers: {..._headers, ...?headers});
     _checkResponse(response);
     final data = jsonDecode(response.body);
     return (data['migrations'] as List)
@@ -66,19 +67,19 @@ class ApiService {
         .toList();
   }
 
-  Future<MigrationModel> getMigration(int id) async {
+  Future<MigrationModel> getMigration(int id, {Map<String, String>? headers}) async {
     final response = await _client.get(
       Uri.parse(ApiConstants.migrationById(id)),
-      headers: _headers,
+      headers: {..._headers, ...?headers},
     );
     _checkResponse(response);
     return MigrationModel.fromJson(jsonDecode(response.body));
   }
 
-  Future<void> deleteMigration(int id) async {
+  Future<void> deleteMigration(int id, {Map<String, String>? headers}) async {
     final response = await _client.delete(
       Uri.parse(ApiConstants.migrationById(id)),
-      headers: _headers,
+      headers: {..._headers, ...?headers},
     );
     if (response.statusCode != 204) {
       _checkResponse(response);
@@ -90,11 +91,13 @@ class ApiService {
     required String fileName,
     String? flutterVersionFrom,
     String? flutterVersionTo,
+    Map<String, String>? headers,
   }) async {
     final request = http.MultipartRequest(
       'POST',
       Uri.parse(ApiConstants.uploadDart),
     );
+    if (headers != null) request.headers.addAll(headers);
     request.files.add(http.MultipartFile.fromBytes(
       'file',
       fileBytes,
@@ -119,11 +122,13 @@ class ApiService {
     required String fileName,
     String? flutterVersionFrom,
     String? flutterVersionTo,
+    Map<String, String>? headers,
   }) async {
     final request = http.MultipartRequest(
       'POST',
       Uri.parse(ApiConstants.uploadZip),
     );
+    if (headers != null) request.headers.addAll(headers);
     request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName));
     if (flutterVersionFrom != null) {
       request.fields['flutter_version_from'] = flutterVersionFrom;
@@ -145,10 +150,11 @@ class ApiService {
     String? title,
     String? flutterVersionFrom,
     String? flutterVersionTo,
+    Map<String, String>? headers,
   }) async {
     final response = await _client.post(
       Uri.parse(ApiConstants.migrateGithub),
-      headers: _headers,
+      headers: {..._headers, ...?headers},
       body: jsonEncode({
         'github_url': githubUrl,
         if (title != null) 'title': title,
@@ -164,13 +170,27 @@ class ApiService {
   Future<MigrationModel> migrateFileOnDemand({
     required int migrationId,
     required String filePath,
+    Map<String, String>? headers,
   }) async {
     final response = await _client.post(
       Uri.parse('${ApiConstants.migrations}/$migrationId/migrate-file'),
-      headers: _headers,
+      headers: {..._headers, ...?headers},
       body: jsonEncode({'file_path': filePath}),
     );
     _checkResponse(response);
     return MigrationModel.fromJson(jsonDecode(response.body));
+  }
+
+  Future<bool> validateKey(String key, String provider) async {
+    try {
+      final response = await _client.post(
+        Uri.parse('${ApiConstants.migrations}/validate-key'),
+        headers: _headers,
+        body: jsonEncode({'key': key, 'provider': provider}),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
   }
 }

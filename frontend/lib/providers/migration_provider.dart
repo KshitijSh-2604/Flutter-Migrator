@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'auth_provider.dart';
 import '../data/models/migration_model.dart';
 import '../data/services/api_service.dart';
 
@@ -6,6 +7,17 @@ enum MigrationState { idle, loading, success, error }
 
 class MigrationProvider extends ChangeNotifier {
   final ApiService _api = ApiService();
+  AuthProvider? _auth;
+
+  void updateAuth(AuthProvider auth) {
+    _auth = auth;
+  }
+
+  Map<String, String> get _authHeaders => {
+    if (_auth?.user?.id != null) 'X-User-ID': _auth!.user!.id,
+    if (_auth?.geminiKey != null) 'X-Gemini-Key': _auth!.geminiKey!,
+    if (_auth?.openaiKey != null) 'X-OpenAI-Key': _auth!.openaiKey!,
+  };
 
   MigrationState _state = MigrationState.idle;
   List<MigrationModel> _migrations = [];
@@ -39,6 +51,7 @@ class MigrationProvider extends ChangeNotifier {
         originalCode: code,
         flutterVersionFrom: fromVersion,
         flutterVersionTo: toVersion,
+        headers: _authHeaders,
       );
       _currentMigration = result;
       _setState(MigrationState.success);
@@ -65,6 +78,7 @@ class MigrationProvider extends ChangeNotifier {
         fileName: fileName,
         flutterVersionFrom: fromVersion,
         flutterVersionTo: toVersion,
+        headers: _authHeaders,
       );
       _currentMigration = result;
       _setState(MigrationState.success);
@@ -91,6 +105,7 @@ class MigrationProvider extends ChangeNotifier {
         fileName: fileName,
         flutterVersionFrom: fromVersion,
         flutterVersionTo: toVersion,
+        headers: _authHeaders,
       );
       _currentMigration = result;
       _setState(MigrationState.success);
@@ -117,6 +132,7 @@ class MigrationProvider extends ChangeNotifier {
         title: title,
         flutterVersionFrom: fromVersion,
         flutterVersionTo: toVersion,
+        headers: _authHeaders,
       );
       _currentMigration = result;
       _setState(MigrationState.success);
@@ -131,11 +147,13 @@ class MigrationProvider extends ChangeNotifier {
   }
 
   Future<void> migrateFileIndividually(int id, String path) async {
-    // We don't use global loading here so we can show file-specific loader
     try {
-      final result = await _api.migrateFileOnDemand(migrationId: id, filePath: path);
+      final result = await _api.migrateFileOnDemand(
+        migrationId: id, 
+        filePath: path,
+        headers: _authHeaders,
+      );
       _currentMigration = result;
-      // Update history list if needed
       final idx = _migrations.indexWhere((m) => m.id == id);
       if (idx != -1) _migrations[idx] = result;
       notifyListeners();
@@ -149,7 +167,7 @@ class MigrationProvider extends ChangeNotifier {
   Future<void> loadHistory() async {
     _setState(MigrationState.loading);
     try {
-      _migrations = await _api.listMigrations();
+      _migrations = await _api.listMigrations(headers: _authHeaders);
       _setState(MigrationState.success);
     } catch (e) {
       _setState(MigrationState.error, error: e.toString());
@@ -158,7 +176,7 @@ class MigrationProvider extends ChangeNotifier {
 
   Future<void> deleteMigration(int id) async {
     try {
-      await _api.deleteMigration(id);
+      await _api.deleteMigration(id, headers: _authHeaders);
       _migrations.removeWhere((m) => m.id == id);
       notifyListeners();
     } catch (e) {

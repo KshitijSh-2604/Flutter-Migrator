@@ -643,7 +643,24 @@ class _PubspecTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sdk    = (changes['sdk_constraints'] as Map?)?.cast<String, String>() ?? {};
+    final sdkRaw = changes['sdk_constraints'];
+    Map<String, String> sdk = {};
+    
+    if (sdkRaw is Map) {
+      sdk = sdkRaw.cast<String, String>();
+    } else if (sdkRaw is String) {
+      // Handle the case where AI returns raw string
+      final dartMatch = RegExp(r'sdk:\s*([^\n]+)').firstMatch(sdkRaw);
+      final flutterMatch = RegExp(r'flutter:\s*([^\n]+)').firstMatch(sdkRaw);
+      if (dartMatch != null) sdk['dart'] = dartMatch.group(1)!.trim();
+      if (flutterMatch != null) sdk['flutter'] = flutterMatch.group(1)!.trim();
+      
+      if (sdk.isEmpty && sdkRaw.isNotEmpty) sdk['info'] = sdkRaw;
+    } else if (changes.containsKey('raw_info')) {
+      // Our new fallback key from the model
+      sdk['info'] = changes['raw_info'];
+    }
+
     final add    = List<Map>.from(changes['add_dependencies']    ?? []);
     final remove = List<Map>.from(changes['remove_dependencies'] ?? []);
     final update = List<Map>.from(changes['update_dependencies'] ?? []);

@@ -1,3 +1,83 @@
 Launching lib\main.dart on Chrome in debug mode...
-Waiting for connection from debug service on Chrome...          
-Waiting for connection from debug service on Chrome...             39.8s
+Waiting for connection from debug service on Chrome...             59.8s
+
+Flutter run key commands.
+r Hot reload. 
+R Hot restart.
+h List all available interactive commands.
+d Detach (terminate "flutter run" but leave application running).
+c Clear the screen
+q Quit (terminate the application on the device).
+
+Debug service listening on ws://127.0.0.1:52442/Gz2uaD7TkZo=/ws
+A Dart VM Service on Chrome is available at: http://127.0.0.1:52442/Gz2uaD7TkZo=
+The Flutter DevTools debugger and profiler on Chrome is available at: http://127.0.0.1:52442/Gz2uaD7TkZo=/devtools/?uri=ws://127.0.0.1:52442/Gz2uaD7TkZo=/ws
+Starting application from main method in: org-dartlang-app:/web_entrypoint.dart.
+supabase.supabase_flutter: INFO: ***** Supabase init completed ***** 
+══╡ EXCEPTION CAUGHT BY WIDGETS LIBRARY ╞═══════════════════════════════════════════════════════════
+The following assertion was thrown building _FocusInheritedScope:
+Could not find a generator for route RouteSettings("/", null) in the _WidgetsAppState.
+Make sure your root app widget has provided a way to generate
+this route.
+Generators for routes are searched for in the following order:
+ 1. For the "/" route, the "home" property, if non-null, is used.
+ 2. Otherwise, the "routes" table is used, if it has an entry for the route.
+ 3. Otherwise, onGenerateRoute is called. It should return a non-null value for any valid route not
+handled by "home" and "routes".
+ 4. Finally if all else fails onUnknownRoute is called.
+Unfortunately, onUnknownRoute was not set.
+
+The relevant error-causing widget was:
+  MaterialApp
+  MaterialApp:file:///C:/Users/Kshitij/Desktop/Flutter%20Migrator/frontend/lib/app.dart:26:12
+
+When the exception was thrown, this was the stack:
+dart-sdk/lib/_internal/js_dev_runtime/private/ddc_runtime/errors.dart 274:3       throw_
+package:flutter/src/widgets/app.dart 1572:9                                       <fn>
+package:flutter/src/widgets/app.dart 1586:14                                      [_onUnknownRoute]
+dart-sdk/lib/_internal/js_dev_runtime/private/ddc_runtime/operations.dart 118:77  tear
+package:flutter/src/widgets/navigator.dart 4684:22                                [_routeNamed]
+package:flutter/src/widgets/navigator.dart 3052:27                                defaultGenerateInitialRoutes
+dart-sdk/lib/_internal/js_dev_runtime/private/ddc_runtime/operations.dart 118:77  tear
+package:flutter/src/widgets/navigator.dart 3856:39                                restoreState
+package:flutter/src/widgets/restoration.dart 929:5                                [_doRestore]
+package:flutter/src/widgets/restoration.dart 915:7                                didChangeDependencies
+package:flutter/src/widgets/navigator.dart 3911:11                                didChangeDependencies
+package:flutter/src/widgets/framework.dart 5968:5                                 [_firstBuild]
+package:flutter/src/widgets/framework.dart 5793:5                                 mount
+...     Normal element mounting (428 frames)
+package:provider/src/inherited_provider.dart 424:11                               mount
+...     Normal element mounting (7 frames)
+package:provider/src/inherited_provider.dart 424:11                               mount
+...     Normal element mounting (7 frames)
+package:nested/nested.dart 222:11                                                 mount
+...     Normal element mounting (7 frames)
+package:nested/nested.dart 187:11                                                 mount
+...     Normal element mounting (7 frames)
+package:nested/nested.dart 222:11                                                 mount
+...     Normal element mounting (63 frames)
+package:flutter/src/widgets/framework.dart 4587:19                                inflateWidget
+package:flutter/src/widgets/framework.dart 4059:18                                updateChild
+package:flutter/src/widgets/view.dart 481:16                                      [_updateChild]
+package:flutter/src/widgets/view.dart 504:5                                       mount
+...     Normal element mounting (15 frames)
+package:flutter/src/widgets/framework.dart 4587:19                                inflateWidget
+package:flutter/src/widgets/framework.dart 4059:18                                updateChild
+package:flutter/src/widgets/binding.dart 1822:16                                  [_rebuild]
+package:flutter/src/widgets/binding.dart 1791:5                                   mount
+package:flutter/src/widgets/binding.dart 1744:16                                  <fn>
+package:flutter/src/widgets/framework.dart 3101:11                                buildScope
+package:flutter/src/widgets/binding.dart 1743:12                                  attach
+package:flutter/src/widgets/binding.dart 1419:26                                  attachToBuildOwner
+package:flutter/src/widgets/binding.dart 1404:5                                   attachRootWidget
+package:flutter/src/widgets/binding.dart 1390:7                                   <fn>
+dart-sdk/lib/_internal/js_dev_runtime/private/isolate_helper.dart 47:11           internalCallback
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+Another exception was thrown: Assertion failed: file:///C:/src/flutter/packages/flutter/lib/src/widgets/framework.dart:2168:12
+Another exception was thrown: Assertion failed: file:///C:/src/flutter/packages/flutter/lib/src/widgets/framework.dart:2168:12
+Another exception was thrown: Assertion failed: file:///C:/src/flutter/packages/flutter/lib/src/widgets/framework.dart:2168:12
+Another exception was thrown: Assertion failed: file:///C:/src/flutter/packages/flutter/lib/src/widgets/framework.dart:2168:12
+Another exception was thrown: Assertion failed: file:///C:/src/flutter/packages/flutter/lib/src/widgets/framework.dart:2168:12
+Another exception was thrown: Assertion failed: file:///C:/src/flutter/packages/flutter/lib/src/widgets/framework.dart:2168:12
+Another exception was thrown: Assertion failed: file:///C:/src/flutter/packages/flutter/lib/src/widgets/framework.dart:2168:12
